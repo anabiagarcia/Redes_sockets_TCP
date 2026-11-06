@@ -238,21 +238,18 @@ int main(int argc, char *argv[]) {
     unsigned long long send_calls  = 0;
     int send_failed = 0;
 
+    //Chamar o tradutor e abortar se der errado
     if (parse_args(argc, argv, &cfg) != 0)
         return EXIT_FAILURE;
 
-    /* Ecoa os parametros em stderr. stdout fica reservado para a linha
-     * CSV com o resultado da medicao, para que o script de experimento
-     * possa redirecionar stdout sem capturar texto informativo.       */
+    // imprimi na tela os parâmetros 
     fprintf(stderr,
             "[cliente %d] servidor=%s:%d duracao=%.3fs bloco=%zu bytes\n",
             cfg.id, cfg.ip, cfg.port, cfg.duration, cfg.block);
 
-    /* Sem isto, escrever em uma conexao que o servidor ja fechou mataria
-     * o processo na hora, sem imprimir a linha CSV. Ignorado, o send()
-     * apenas devolve -1 com errno == EPIPE, que o laco trata.         */
     signal(SIGPIPE, SIG_IGN);
 
+    //criar socket
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (sockfd == -1) {
@@ -260,10 +257,12 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    //monta endereço
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(cfg.port);
 
+    //traduzir e colocar o IP
     if (inet_pton(AF_INET, cfg.ip,
                   &server_addr.sin_addr) != 1) {
         fprintf(stderr, "Erro: endereco IPv4 invalido ('%s').\n", cfg.ip);
@@ -271,6 +270,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    //conectar
     if (connect(sockfd, (struct sockaddr *)&server_addr,
                 sizeof(server_addr)) == -1) {
         perror("connect");
@@ -278,12 +278,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    /* Consulta (sem alterar) o tamanho do buffer de envio do socket.
-     *
-     * Esse valor precisa constar no relatorio tecnico: ele limita
-     * quantos bytes podem estar em transito e, portanto, influencia a
-     * vazao alcancavel. Deixamos no padrao do sistema de proposito --
-     * fixar o valor desativaria o ajuste automatico do nucleo.        */
+    //Consulta (sem alterar) o tamanho do buffer de envio do socket
     {
         int sndbuf = 0;
         socklen_t optlen = sizeof(sndbuf);
@@ -294,8 +289,7 @@ int main(int argc, char *argv[]) {
                     cfg.id, sndbuf);
     }
 
-    /* Rede de seguranca contra um servidor que pare de ler (ver o
-     * comentario em SEND_TIMEOUT_S). Nao afeta a operacao normal.    */
+    //cronômetro de segurança em cada send()
     {
         struct timeval send_timeout;
 
@@ -322,41 +316,23 @@ int main(int argc, char *argv[]) {
     t_start  = now_seconds();
     deadline = t_start + cfg.duration;
 
-    /* Laco principal da medicao.
-     *
-     * Regras que este laco respeita, e que valem mais que a sua
-     * aparencia simples:
-     *
-     *   - nenhuma escrita em tela ou arquivo aqui dentro: printf e
-     *     mais lento que a rede e dominaria o resultado;
-     *   - nenhum memset/memcpy/snprintf: o bloco ja esta pronto;
-     *   - nenhum sleep: queremos a velocidade maxima;
-     *   - nenhum socket()/close(): a conexao foi aberta antes.
-     *
-     * A leitura do relogio a cada volta e aceitavel porque, nesta
-     * plataforma, clock_gettime(CLOCK_MONOTONIC) e resolvido sem troca
-     * de modo de execucao (dezenas de nanossegundos), enquanto um
-     * send() de 64 KiB custa ordens de magnitude mais.                */
+    // Laco principal da medicao
     while (now_seconds() < deadline) {
         ssize_t n = send(sockfd, block, cfg.block, MSG_NOSIGNAL);
 
         if (n == -1) {
-            /* EINTR nao e erro: um sinal chegou durante a chamada.
-             * Voltamos ao topo, que reavalia a condicao do laco.      */
+            //um sinal chegou durante a chamada
             if (errno == EINTR)
                 continue;
 
-            /* EPIPE / ECONNRESET: o servidor encerrou. Nao e falha do
-             * experimento, so o fim antecipado desta conexao.         */
+            //o servidor encerrou
             if (errno == EPIPE || errno == ECONNRESET) {
                 fprintf(stderr, "[cliente %d] servidor encerrou a "
                                 "conexao antes do prazo.\n", cfg.id);
                 break;
             }
 
-            /* Estouro do SO_SNDTIMEO: o servidor ficou tempo demais
-             * sem liberar espaco no buffer. Voltamos ao topo; se o
-             * prazo ja venceu, o laco termina normalmente.            */
+            //o servidor ficou tempo demais sem liberar espaco no buffer           
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 fprintf(stderr, "[cliente %d] aviso: send() bloqueado "
                                 "por %d s sem progresso.\n",
@@ -372,15 +348,7 @@ int main(int argc, char *argv[]) {
         if (n == 0)
             break;
 
-        /* Acumula o retorno REAL de send(), nunca cfg.block.
-         *
-         * send() pode aceitar menos bytes do que foi pedido, quando o
-         * buffer de envio do nucleo esta quase cheio. Somar o tamanho
-         * pedido em vez do aceito superestimaria a vazao.
-         *
-         * Como o conteudo e enchimento, nao ha mensagem a preservar:
-         * se o envio foi parcial, basta contar o que saiu e seguir com
-         * um bloco inteiro na proxima volta.                          */
+        //send() pode aceitar menos bytes do que foi pedido
         total_bytes += (unsigned long long)n;
         send_calls++;
     }
