@@ -102,7 +102,7 @@ void report(const Config *cfg, unsigned long long bytes, unsigned long long call
            cfg->id, bytes, elapsed, mbps, calls);
     fflush(stdout);
 
-    /resumo na tela
+    // Resumo na tela
     fprintf(stderr,
             "[cliente %d] enviados %llu bytes (%.2f MiB) em %.3f s\n"
             "[cliente %d] taxa local: %.2f Mbps  |  %llu chamadas send()"
